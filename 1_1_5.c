@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <stdbool.h>
 
 #define DEBUG
 
@@ -14,7 +15,7 @@ typedef unsigned int     UINT32;
 
 
 #define MAX_ARRAY_SIZE   1000000
-
+#define MAX_PROCESS_TIME 1000
 
 #define SCAN_KMER        0
 #define SCAN_NUMOFDNA    1
@@ -29,7 +30,6 @@ typedef struct {
     UINT32 total_size;
 }DNA_INFO_t;
 
-UINT32 pMostProbableKmer[2][100];//Store the most probability position.
 UINT32 alpha[256] = {0};
 
 
@@ -43,8 +43,8 @@ bool read_test_data(const char* file_name,DNA_INFO_t *dna_info,int maxsize)
     UINT8 c;
     FILE* file = fopen (file_name, "r");
     
-    if (!file) return FALSE;
-    if (!src)  return FALSE;
+    if (!file) return false;
+    if (!src)  return false;
     
     dna_info->total_size = dna_info->num_of_dna = dna_info->kmer = 0;
     
@@ -86,24 +86,25 @@ bool read_test_data(const char* file_name,DNA_INFO_t *dna_info,int maxsize)
     
     fclose (file);
     
-    return TRUE;
+    return true;
 }
 
 
 
 /*
- * k: KMER
+ * dna_info: 
+ * profile_pattern:
  */
-double caculate_pr(UINT8 *dna,UINT32 k)
+double caculate_pr(UINT8 *dna,UINT32 *profile_pattern,UINT32 kmer)
 {
     UINT32 i;
     double multiple = 1;
     double j;
     
-    for(i=0,multiple=1;i<k;i++){
+    for(i=0,multiple=1;i<kmer;i++){
         
-        j = PROFILE_PATTERN[i]+PROFILE_PATTERN[i+KMER_LENGTH]+PROFILE_PATTERN[i+KMER_LENGTH*2]+PROFILE_PATTERN[i+KMER_LENGTH*3];
-        j = PROFILE_PATTERN[alpha[dna[i]]*KMER_LENGTH+i]/j;
+        j = profile_pattern[i]+profile_pattern[i+kmer]+profile_pattern[i+kmer*2]+profile_pattern[i+kmer*3];
+        j = profile_pattern[alpha[dna[i]]*kmer+i]/j;
                     
         multiple*=j;
     }
@@ -114,124 +115,171 @@ double caculate_pr(UINT8 *dna,UINT32 k)
 
 /*
  * Score the matrix motifs.
- * dna_src: Source of DNA.
- * kmer:  KMER length.
- * num_dnas: Number of DNA.
- * size_dna: Size of single DNA.
+ * score_dna
+ * dna_info
  */
-UINT32 score_mmotifs(DNA_INFO_t *dna_info)
+UINT32 score_mmotifs(UINT8 *score_dna,DNA_INFO_t *dna_info)
 {
-    UINT32 i,j,k,l;
+    UINT32 i,j,l;
     UINT32 sum_A,sum_C,sum_G,sum_T,max_NU=0,sum_column=0,sum=0;
-    UINT8 *dna_src = dna_info->src;
     UINT32 kmer = dna_info->kmer;
-    UINT32 num_dnas = dna_info->num_of_dna;
+    UINT32 num_dna = dna_info->num_of_dna;
     UINT32 size_dna = dna_info->size_of_each_dna;
 
-    for(i=0;i<kmer;i++){
-        sum_A = sum_C = sum_G = sum_T = 0;
-        for(j=0;j<num_dnas;j++){
-            k=pMostProbableKmer[0][j];
-            if(dna_src[j*size_dna+k+i] == 'A') sum_A++;
-            if(dna_src[j*size_dna+k+i] == 'C') sum_C++;
-            if(dna_src[j*size_dna+k+i] == 'G') sum_G++;
-            if(dna_src[j*size_dna+k+i] == 'T') sum_T++;
+    for(i=0;i<kmer;i++){        
+        for(sum_A=sum_C=sum_G=sum_T=j=0;j<num_dna;j++){           
+            if(score_dna[j*kmer+i] == 'A') sum_A++;
+            if(score_dna[j*kmer+i] == 'C') sum_C++;
+            if(score_dna[j*kmer+i] == 'G') sum_G++;
+            if(score_dna[j*kmer+i] == 'T') sum_T++;
         }
-
         sum_column = sum_A+sum_C+sum_G+sum_T;
-
         l = (sum_A>sum_C)?sum_A:sum_C;
         l = (sum_G>l)?sum_G:l;
         l = (sum_T>l)?sum_T:l;
         sum_column -= l;
-        sum+=sum_column;
+        sum += sum_column;
     }
+
     return sum;
 }
+/*
+ * Generate motifs profile.
+ * motifs:
+ * profile_pattern:
+ * kmer:
+ * num_of_dna:
+ */
+void gen_profile(UINT8 *motifs,UINT32 *profile_pattern,DNA_INFO_t *dna_info)
+{
+    UINT32 i,j;
+    UINT32 a_cnt,c_cnt,g_cnt,t_cnt;
+    
+    //Generate profile
+    for(i=0;i<dna_info->kmer;i++){                
+        for(a_cnt=c_cnt=g_cnt=t_cnt=j=0;j<dna_info->num_of_dna;j++){
+            if(motifs[j*dna_info->kmer+i] == 'A') a_cnt++;
+            if(motifs[j*dna_info->kmer+i] == 'C') c_cnt++;
+            if(motifs[j*dna_info->kmer+i] == 'G') g_cnt++;
+            if(motifs[j*dna_info->kmer+i] == 'T') t_cnt++;
+        }
+        
+        profile_pattern[i]                  = a_cnt+1;
+        profile_pattern[dna_info->kmer+i]   = c_cnt+1;
+        profile_pattern[2*dna_info->kmer+i] = g_cnt+1;
+        profile_pattern[3*dna_info->kmer+i] = t_cnt+1;
+    }
+}
+
 
 /*
  * Limit to 1000 times
- * Dna: DNA strings.
- * kmer: KMER.
- * num_dnas: Number of DNA strings.
- * size_dna: Size of DNA.
+ * dna_info: .
+ * profile_pattern: .
+ * best_motifs: The first randon select motifs.
  */
-void RandomizedMotifSearch(UINT8 *Dna,const UINT32 kmer,const UINT32 num_dnas,const UINT32 size_dna)
+UINT32 RandomizedMotifSearch(DNA_INFO_t *dna_info,UINT32 *profile_pattern,UINT8 *best_motifs) 
 {
-    UINT32 i,pseudo_cnt=0;
     UINT32 score=0;
-    UINT32 i=0,j;
+    UINT32 i,j;
+    UINT8  *dna_src = dna_info->src;
+    const UINT32 kmer = dna_info->kmer;
+    const UINT32 num_dna = dna_info->num_of_dna;
+    const UINT32 size_dna = dna_info->size_of_each_dna;
+    UINT32 best_score;
+    UINT8  *motifs = malloc(kmer*num_dna);    
     double m_prob,c_prob;
+    
+    
 
-    do{
-        for(j=1;j<t;j++){        
-            for(i=0,m_prob=0,pMostProbableKmer[0][j] = 0;i<=(size_dna-kmer);i++){              
-                  c_prob = caculate_pr(Dna+i+j*size_dna,kmer);
+    //Random select motifs from DNA strings.
+    for(i=0;i<num_dna;i++){        
+        j = rand()%(size_dna-kmer);
+        memcpy(best_motifs+i*kmer,dna_src+i*size_dna+j,kmer);
+    }
+    
+    // Generate profile of motifs
+    gen_profile(best_motifs,profile_pattern,dna_info);
+    
+    // Get the score from first random motifs.
+    best_score = score_mmotifs(best_motifs,dna_info);
+
+    while(1){
+        //Get the best motifs by profile.
+        for(i=0;i<num_dna;i++){
+            for(j=0,m_prob=0,memcpy(motifs+i*kmer,dna_src+i*size_dna,kmer);j<=(size_dna-kmer);j++){              
+                  c_prob = caculate_pr(dna_src+j+i*size_dna,profile_pattern,kmer);
                   if(c_prob>m_prob){
                       m_prob = c_prob;
                       //Update the max probabity position
-                      pMostProbableKmer[0][j] = i;
+                      memcpy(motifs+i*kmer,dna_src+j+i*size_dna,kmer);
                   }
             }
         }
 
         //Score
-        if()
-
-        pseudo_cnt++;
-    }while(pseudo_cnt<1000)
+        score = score_mmotifs(motifs,dna_info);
+        if(score<best_score){
+            //Create new profile.
+            gen_profile(motifs,profile_pattern,dna_info);
+            best_score = score;
+            memcpy(best_motifs,motifs,kmer*num_dna);
+        }
+        else
+            break;        
+    }
+    free(motifs);
+    
+    return best_score;
 }
 
 void main()
 {
     UINT32 i=0,j=0;
-    UINT32 a_cnt,c_cnt,g_cnt,t_cnt;
     UINT32 pr_multi,max_pr=0;
-    UINT32 best_score;
     UINT32 *profile_pattern;
     DNA_INFO_t dna_info;
-    
+    UINT8  *best_motifs,*motifs;
+    UINT32 score = 0xffffffff;
+    time_t t;
+        
     dna_info.src = malloc(MAX_ARRAY_SIZE);
     if(!read_test_data("dataset_158_9.txt",&dna_info,MAX_ARRAY_SIZE))
         return;
 #ifdef DEBUG
-    printf("num_d:%d dna_total:%d dna_sz:%d kmer:%d \n",NUMBER_OF_DNA,DNA_TOTAL_LENGTH,SIZE_OF_DNA,KMER_LENGTH);
+    printf("num_d:%d dna_total:%d dna_sz:%d kmer:%d \n",dna_info.num_of_dna,dna_info.total_size,dna_info.size_of_each_dna,dna_info.kmer);
 #endif
     // Init hash index.
     alpha['A'] = 0;
     alpha['C'] = 1;
     alpha['G'] = 2;
     alpha['T'] = 3;
-  
+
     //Init profile table
-    PROFILE_PATTERN = malloc(sizeof(UINT32)*KMER_LENGTH*NUMBER_OF_DNA);
-    memset(PROFILE_PATTERN,0,sizeof(UINT32)*KMER_LENGTH*NUMBER_OF_DNA);
-    memset(pMostProbableKmer,0,sizeof(UINT32)*NUMBER_OF_DNA*2);
+    profile_pattern = malloc(sizeof(UINT32)*dna_info.kmer*4);
+    memset(profile_pattern,0,sizeof(UINT32)*dna_info.kmer*4);    
     
-    //Random select kmers in DNA strings.
-    for(i=0;i<NUMBER_OF_DNA;i++){
-        srand(time(NULL));
-        j = rand()%(SIZE_OF_DNA-KMER_LENGTH);
-        memcpy(PROFILE_PATTERN++i*SIZE_OF_DNA,DNA_SRC+i*SIZE_OF_DNA+j,KMER_LENGTH);
-    }
-    
-    best_score = score_mmotifs(PROFILE_PATTERN,KMER_LENGTH,NUMBER_OF_DNA);
-    
-    //Generate profile
-    for(i=0;i<KMER_LENGTH;i++){
-        a_cnt=c_cnt=g_cnt=t_cnt = 0;
-        for(j=0;j<NUMBER_OF_DNA;j++){
-            if(PROFILE_PATTERN[j*SIZE_OF_DNA+i] == 'A') a_cnt++;
-            if(PROFILE_PATTERN[j*SIZE_OF_DNA+i] == 'C') c_cnt++;
-            if(PROFILE_PATTERN[j*SIZE_OF_DNA+i] == 'G') g_cnt++;
-            if(PROFILE_PATTERN[j*SIZE_OF_DNA+i] == 'T') t_cnt++;
+    best_motifs = malloc(dna_info.kmer*dna_info.num_of_dna);
+    motifs = malloc(dna_info.kmer*dna_info.num_of_dna);
+    //Initialize random info.
+    srand((unsigned) time(&t));
+    for(i=0,score=0xffffffff;i<MAX_PROCESS_TIME;i++){
+        j = RandomizedMotifSearch(&dna_info,profile_pattern,motifs);
+        if(j<score){
+            score = j;
+            memcpy(best_motifs,motifs,dna_info.kmer*dna_info.num_of_dna);
         }
-        PROFILE_PATTERN[i]               = a_cnt;
-        PROFILE_PATTERN[SIZE_OF_DNA+i]   = c_cnt;
-        PROFILE_PATTERN[2*SIZE_OF_DNA+i] = g_cnt;
-        PROFILE_PATTERN[3*SIZE_OF_DNA+i] = t_cnt;
     }
         
-    RandomizedMotifSearch(,,,,);
     
+    for(i=0;i<dna_info.num_of_dna;i++){
+        for(j=0;j<dna_info.kmer;j++){
+            printf("%c",best_motifs[i*dna_info.kmer+j]);
+        }
+        printf("\n"); 
+    }
+    
+    free(best_motifs);
+    free(motifs);
+      
 }
