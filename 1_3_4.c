@@ -1,5 +1,6 @@
 /*
  * Gibbs Sampling
+ * Not the Profile-randomly generated k-mer 
  * Delete the latest "\n" from input file
  */
 #include <stdio.h>
@@ -217,7 +218,7 @@ UINT32 GibbsSampler(DNA_INFO_t *dna_info,UINT32 *profile_pattern,UINT8 *best_mot
         ith_except = rand()%num_dna;
         // Profile ¡ö profile matrix constructed from all strings in Motifs except for Motifi
         gen_profile(motifs,profile_pattern,dna_info,ith_except);
-        //Motifi ¡ö Profile-randomly generated k-mer in the i-th sequence
+        
         for(j=0,m_prob=0;j<=(size_dna-kmer);j++){              
                   c_prob = caculate_pr(dna_src+j+ith_except*size_dna,profile_pattern,kmer);
                   if(c_prob>m_prob){
